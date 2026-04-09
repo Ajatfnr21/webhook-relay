@@ -1,0 +1,86 @@
+# Webhook Relay Configuration v2.0
+
+# Routes configuration
+routes:
+  # GitHub webhooks
+  - name: "github-to-slack"
+    source_path: "/github"
+    filter: "$.repository.name"
+    transform: |
+      {
+        "text": "New push to {{ repository.name }} by {{ pusher.name }}",
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*{{ repository.name }}*\nNew {{ ref }} push by {{ pusher.name }}"
+            }
+          }
+        ]
+      }
+    destinations:
+      - name: "slack"
+        url: "${SLACK_WEBHOOK_URL}"
+        method: "POST"
+        retry_attempts: 3
+        retry_delay: 1.0
+      - name: "discord"
+        url: "${DISCORD_WEBHOOK_URL}"
+        method: "POST"
+        timeout: 30
+        transform_override: |
+          {
+            "content": "New push to {{ repository.full_name }}",
+            "embeds": [{
+              "title": "{{ repository.name }}",
+              "description": "Commit: {{ head_commit.message }}",
+              "url": "{{ head_commit.url }}"
+            }]
+          }
+    enabled: true
+
+  # Stripe webhooks
+  - name: "stripe-events"
+    source_path: "/stripe"
+    secret: "${STRIPE_WEBHOOK_SECRET}"
+    filter: "$.type"
+    destinations:
+      - name: "internal-api"
+        url: "${INTERNAL_API_URL}/stripe"
+        method: "POST"
+        headers:
+          "X-Source": "webhook-relay"
+      - name: "email-service"
+        url: "${EMAIL_SERVICE_URL}/notify"
+        method: "POST"
+
+  # Generic forward
+  - name: "generic-forward"
+    source_path: "/forward"
+    destinations:
+      - name: "primary"
+        url: "${PRIMARY_WEBHOOK_URL}"
+        method: "POST"
+        retry_attempts: 5
+      - name: "backup"
+        url: "${BACKUP_WEBHOOK_URL}"
+        method: "POST"
+        retry_attempts: 3
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+
+# Redis configuration
+redis:
+  url: "${REDIS_URL:-redis://localhost:6379/0}"
+  max_connections: 50
+
+# Logging
+logging:
+  level: INFO
+  format: "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+  file: "logs/webhook-relay.log"
